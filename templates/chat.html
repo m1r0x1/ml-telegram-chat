@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>MiniTelegram ML - Chat</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #e5ddd5;
+            height: 100vh;
+            display: flex;
+        }
+        .sidebar {
+            width: 280px;
+            background: white;
+            border-right: 1px solid #ddd;
+            display: flex;
+            flex-direction: column;
+        }
+        .user-info {
+            padding: 20px;
+            background: #075e54;
+            color: white;
+            font-weight: bold;
+            font-size: 18px;
+        }
+        .users-list {
+            flex: 1;
+            overflow-y: auto;
+        }
+        .user-item {
+            padding: 15px 20px;
+            cursor: pointer;
+            border-bottom: 1px solid #eee;
+            transition: background 0.2s;
+        }
+        .user-item:hover {
+            background: #f5f5f5;
+        }
+        .user-item.active {
+            background: #e8f0fe;
+        }
+        .chat-area {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+        }
+        .chat-header {
+            padding: 15px 20px;
+            background: #075e54;
+            color: white;
+            font-weight: bold;
+            font-size: 16px;
+        }
+        .messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+        }
+        .message {
+            margin-bottom: 15px;
+            display: flex;
+            flex-direction: column;
+        }
+        .message.sent {
+            align-items: flex-end;
+        }
+        .message.received {
+            align-items: flex-start;
+        }
+        .message-bubble {
+            max-width: 60%;
+            padding: 10px 15px;
+            border-radius: 18px;
+            position: relative;
+        }
+        .message.sent .message-bubble {
+            background: #dcf8c5;
+        }
+        .message.received .message-bubble {
+            background: white;
+        }
+        .message-info {
+            font-size: 11px;
+            color: #666;
+            margin-top: 5px;
+        }
+        .ml-badge {
+            font-size: 10px;
+            background: #667eea;
+            color: white;
+            padding: 2px 6px;
+            border-radius: 10px;
+            margin-left: 5px;
+        }
+        .input-area {
+            padding: 20px;
+            background: #f0f0f0;
+            display: flex;
+            gap: 10px;
+        }
+        .input-area input {
+            flex: 1;
+            padding: 12px;
+            border: none;
+            border-radius: 25px;
+            outline: none;
+            font-size: 14px;
+        }
+        .input-area button {
+            padding: 12px 25px;
+            background: #075e54;
+            color: white;
+            border: none;
+            border-radius: 25px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        .stats {
+            padding: 10px 20px;
+            background: #f9f9f9;
+            font-size: 12px;
+            border-top: 1px solid #ddd;
+            color: #666;
+        }
+        .warning {
+            background: #ffebee;
+            color: #c62828;
+            padding: 8px 12px;
+            border-radius: 8px;
+            margin: 10px;
+            font-size: 12px;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <div class="sidebar">
+        <div class="user-info">
+            👤 {{ username }}
+        </div>
+        <div class="users-list">
+            <div style="padding: 10px 20px; color: #666; font-size: 12px;">КОНТАКТЫ</div>
+            {% for user in users %}
+            <div class="user-item" onclick="selectUser('{{ user }}')">
+                {% if user == 'ml_bot' %}🤖{% else %}👤{% endif %} 
+                <strong>{{ user }}</strong>
+                {% if user == 'ml_bot' %}
+                <span style="color: #667eea; font-size: 10px;"> AI Bot</span>
+                {% endif %}
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    <div class="chat-area">
+        <div class="chat-header" id="chatHeader">
+            💬 Выберите контакт для чата
+        </div>
+        <div class="messages" id="messages">
+            <div style="text-align: center; color: #999; margin-top: 50px;">
+                👈 Нажмите на контакт слева<br>
+                чтобы начать общение
+            </div>
+        </div>
+        <div class="input-area">
+            <input type="text" id="messageInput" placeholder="Введите сообщение...">
+            <button onclick="sendMessage()">Отправить</button>
+        </div>
+        <div class="stats" id="stats">
+            📊 Статистика появится после отправки сообщений
+        </div>
+    </div>
+
+    <script>
+        let ws;
+        let currentUser = '{{ username }}';
+        let currentChat = null;
+        
+        function connect() {
+            ws = new WebSocket(`ws://localhost:8000/ws/${currentUser}`);
+            
+            ws.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                
+                if (data.type === 'warning') {
+                    showWarning(data.text);
+                } else if (data.from === currentChat || data.to === currentChat || (data.from === 'ml_bot' && data.to === currentUser)) {
+                    addMessage(data);
+                }
+                
+                if (currentChat) {
+                    updateStats();
+                }
+            };
+            
+            ws.onerror = (error) => {
+                console.error('WebSocket error:', error);
+            };
+        }
+        
+        function selectUser(user) {
+            currentChat = user;
+            document.getElementById('chatHeader').innerHTML = `💬 Чат с ${user} ${user === 'ml_bot' ? '🤖' : ''}`;
+            document.getElementById('messages').innerHTML = '';
+            updateStats();
+        }
+        
+        function sendMessage() {
+            const input = document.getElementById('messageInput');
+            const text = input.value.trim();
+            
+            if (text && currentChat) {
+                ws.send(JSON.stringify({
+                    to: currentChat,
+                    text: text
+                }));
+                input.value = '';
+            } else if (!currentChat) {
+                showWarning('Сначала выберите контакт для чата!');
+            }
+        }
+        
+        function addMessage(msg) {
+            const messagesDiv = document.getElementById('messages');
+            
+            if (messagesDiv.children.length === 1 && messagesDiv.children[0].innerText.includes('Нажмите на контакт')) {
+                messagesDiv.innerHTML = '';
+            }
+            
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${msg.from === currentUser ? 'sent' : 'received'}`;
+            
+            const bubble = document.createElement('div');
+            bubble.className = 'message-bubble';
+            
+            let mlHtml = '';
+            if (msg.ml_analysis && msg.from !== currentUser) {
+                const sentiment = msg.ml_analysis.sentiment === 'positive' ? '😊' : (msg.ml_analysis.sentiment === 'negative' ? '😞' : '😐');
+                mlHtml = `<span class="ml-badge">${sentiment} ${msg.ml_analysis.sentiment}</span>`;
+            }
+            
+            bubble.innerHTML = `
+                <strong>${msg.from === currentUser ? 'Вы' : msg.from}</strong><br>
+                ${msg.text}
+                ${mlHtml}
+            `;
+            
+            const info = document.createElement('div');
+            info.className = 'message-info';
+            const time = new Date(msg.timestamp).toLocaleTimeString('ru-RU', {hour: '2-digit', minute:'2-digit'});
+            info.textContent = time;
+            
+            messageDiv.appendChild(bubble);
+            messageDiv.appendChild(info);
+            messagesDiv.appendChild(messageDiv);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        }
+        
+        function showWarning(text) {
+            const messagesDiv = document.getElementById('messages');
+            const warning = document.createElement('div');
+            warning.className = 'warning';
+            warning.textContent = text;
+            messagesDiv.appendChild(warning);
+            setTimeout(() => warning.remove(), 3000);
+        }
+        
+        async function updateStats() {
+            if (!currentChat) return;
+            
+            try {
+                const response = await fetch(`/stats/${currentUser}`);
+                const stats = await response.json();
+                
+                if (!stats.error) {
+                    const statsDiv = document.getElementById('stats');
+                    statsDiv.innerHTML = `
+                        📊 <strong>Ваша статистика</strong> | 
+                        Сообщений: ${stats.total_messages} | 
+                        😊 Позитивных: ${stats.sentiment_distribution.positive} | 
+                        😞 Негативных: ${stats.sentiment_distribution.negative} |
+                        🚫 Токсичность: ${stats.toxicity_rate}% |
+                        📏 Длина: ${stats.avg_message_length} симв.
+                    `;
+                }
+            } catch(e) {
+                console.error('Stats error:', e);
+            }
+        }
+        
+        document.getElementById('messageInput').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') sendMessage();
+        });
+        
+        connect();
+        setInterval(() => {
+            if (currentChat) updateStats();
+        }, 10000);
+    </script>
+</body>
+</html>
